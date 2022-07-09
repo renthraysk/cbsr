@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha512"
-	"embed"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -53,6 +52,8 @@ func (h *headers) set(dst http.Header) http.Header {
 		}
 		dst["Vary"] = vary
 	}
+	// Probably not a good idea to disguard an existing
+	// Cache-Control header for an immutable one
 	if _, ok := dst["Cache-Control"]; !ok {
 		dst["Cache-Control"] = s[4:5:5]
 	}
@@ -96,14 +97,12 @@ func (s *fsResource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodHead, http.MethodGet:
 		s.set(w.Header())
-		if r.Method == http.MethodHead {
-			return
+		if r.Method != http.MethodHead {
+			s.WriteTo(w)
 		}
 	default:
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
 	}
-	s.WriteTo(w)
 }
 
 type memResource struct {
@@ -124,14 +123,12 @@ func (s *memResource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodHead, http.MethodGet:
 		s.set(w.Header())
-		if r.Method == http.MethodHead {
-			return
+		if r.Method != http.MethodHead {
+			s.WriteTo(w)
 		}
 	default:
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
 	}
-	s.WriteTo(w)
 }
 
 type resources []resource
@@ -206,11 +203,11 @@ func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 	return m, err
 }
 
-func RegisterFS(mux *http.ServeMux, efs embed.FS, prefix string) (map[string]string, error) {
+func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]string, error) {
 
 	classifier := defaultClassifier{}
 
-	index, err := index(efs, classifier)
+	index, err := index(fsys, classifier)
 	if err != nil {
 		return nil, err
 	}

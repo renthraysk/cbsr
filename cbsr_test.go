@@ -25,6 +25,8 @@ const AE = "Accept-Encoding"
 
 var methods = []string{"GET", "HEAD"}
 var paths = []string{"testdata/static/js/2.js", "testdata/static/js/3.js"}
+
+// Accept-Encoding => Content-Encoding
 var encodings = map[string]string{
 	"*":           "br",
 	"gzip":        "gzip",
@@ -41,12 +43,18 @@ func newRequest(t *testing.T, method, path, acceptEncoding string) *http.Request
 	return r
 }
 
-func TestMethodNotAllowed(t *testing.T) {
+func getMux(t *testing.T) (*http.ServeMux, map[string]string) {
 	mux := http.NewServeMux()
+
 	srIndex, err := RegisterFS(mux, testdata, "testdata/static")
 	if err != nil {
 		t.Fatalf("failed to index fs: %v", err)
 	}
+	return mux, srIndex
+}
+
+func TestMethodNotAllowed(t *testing.T) {
+	mux, srIndex := getMux(t)
 	for _, method := range []string{"POST", "PUT", "DELETE", "CONNECT", "OPTIONS"} {
 		r := httptest.NewRecorder()
 		mux.ServeHTTP(r, newRequest(t, method, srIndex[paths[0]], "*"))
@@ -55,11 +63,7 @@ func TestMethodNotAllowed(t *testing.T) {
 }
 
 func TestNotAcceptable(t *testing.T) {
-	mux := http.NewServeMux()
-	srIndex, err := RegisterFS(mux, testdata, "testdata/static")
-	if err != nil {
-		t.Fatalf("failed to index fs: %v", err)
-	}
+	mux, srIndex := getMux(t)
 	for _, acceptEncoding := range []string{"*;q=0", "identity;q=0"} {
 		r := httptest.NewRecorder()
 		mux.ServeHTTP(r, newRequest(t, "HEAD", srIndex[paths[0]], acceptEncoding))
@@ -68,11 +72,7 @@ func TestNotAcceptable(t *testing.T) {
 }
 
 func TestOK(t *testing.T) {
-	mux := http.NewServeMux()
-	srIndex, err := RegisterFS(mux, testdata, "testdata/static")
-	if err != nil {
-		t.Fatalf("failed to index fs: %v", err)
-	}
+	mux, srIndex := getMux(t)
 	for _, method := range methods {
 		for _, path := range paths {
 			for acceptEncoding, contentEncoding := range encodings {
