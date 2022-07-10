@@ -79,7 +79,7 @@ func TestOK(t *testing.T) {
 				t.Run(fmt.Sprintf("%s %s %s", method, path, acceptEncoding), func(t *testing.T) {
 					r := httptest.NewRecorder()
 					mux.ServeHTTP(r, newRequest(t, method, srIndex[path], acceptEncoding))
-					assert(t, "Status", http.StatusOK, r.Code)
+					assertStatus(t, http.StatusOK, r.Code)
 					if r.Code == http.StatusOK {
 						assert(t, "Content-Encoding", contentEncoding, r.Header().Get("Content-Encoding"))
 						assert(t, "Vary", "Accept-Encoding", r.Header().Get("Vary"))
@@ -87,6 +87,13 @@ func TestOK(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func assertStatus(t *testing.T, expected, got int) {
+	t.Helper()
+	if expected != got {
+		t.Fatalf("Status expected %v %q, got %v %q", expected, http.StatusText(expected), got, http.StatusText(got))
 	}
 }
 

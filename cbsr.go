@@ -2,7 +2,6 @@ package cbsr
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"crypto/sha512"
 	"encoding/base64"
@@ -20,130 +19,93 @@ import (
 	"github.com/renthraysk/encoding"
 )
 
-type headers struct {
+type slice []byte
+
+func (s slice) WriteTo(w io.Writer) (int64, error) {
+	n, err := w.Write(s)
+	return int64(n), err
+}
+
+type fsFile struct {
+	fsys fs.FS
+	name string
+}
+
+func (z *fsFile) WriteTo(w io.Writer) (int64, error) {
+	f, err := z.fsys.Open(z.name)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	return io.Copy(w, f)
+}
+
+type resource struct {
 	contentType     string
 	contentLength   int64
 	contentEncoding encoding.Encoding
 	vary            bool
+	writerTo        io.WriterTo
 }
 
-func (h *headers) ContentType() string                { return h.contentType }
-func (h *headers) ContentEncoding() encoding.Encoding { return h.contentEncoding }
-func (h *headers) ContentLength() int64               { return h.contentLength }
-func (h *headers) SetVary()                           { h.vary = true }
-
-func (h *headers) set(dst http.Header) http.Header {
-	s := [...]string{
-		h.contentType,
-		strconv.FormatInt(h.contentLength, 10),
-		h.contentEncoding.String(),
+func (s *resource) set(dst http.Header) {
+	v := [...]string{
+		s.contentType,
+		strconv.FormatInt(s.contentLength, 10),
+		s.contentEncoding.String(),
 		"Accept-Encoding",
 		"max-age=31536000, immutable",
 	}
-	dst["Content-Type"] = s[:1:1]
-	dst["Content-Length"] = s[1:2:2]
-	if h.contentEncoding != encoding.Identity {
-		dst["Content-Encoding"] = s[2:3:3]
+	dst["Content-Type"] = v[:1:1]
+	dst["Content-Length"] = v[1:2:2]
+	if s.contentEncoding != encoding.Identity {
+		dst["Content-Encoding"] = v[2:3:3]
 	}
-	if h.vary {
-		vary := s[3:4:4]
+	if s.vary {
+		vary := v[3:4:4]
 		if v, ok := dst["Vary"]; ok {
 			vary = ensureValue(v, "Accept-Encoding")
 		}
 		dst["Vary"] = vary
 	}
-	// Probably not a good idea to disguard an existing
+	// Probably not a good idea to discard an existing
 	// Cache-Control header for an immutable one
 	if _, ok := dst["Cache-Control"]; !ok {
-		dst["Cache-Control"] = s[4:5:5]
+		dst["Cache-Control"] = v[4:5:5]
 	}
-	return dst
 }
 
-type resource interface {
-	ContentType() string
-	ContentEncoding() encoding.Encoding
-	ContentLength() int64
-	SetVary()
-	set(http.Header) http.Header
-
-	http.Handler
-
-	io.WriterTo
-	Open() (io.ReadCloser, error)
-}
-
-type fsResource struct {
-	headers
-	fsys fs.FS
-	name string
-}
-
-func (s *fsResource) Open() (io.ReadCloser, error) {
-	return s.fsys.Open(s.name)
-}
-
-func (s *fsResource) WriteTo(w io.Writer) (int64, error) {
-	f, err := s.Open()
-	if err != nil {
-		return 0, err
+func (s *resource) writeResponse(w http.ResponseWriter, body bool) error {
+	s.set(w.Header())
+	if body {
+		_, err := s.writerTo.WriteTo(w)
+		return err
 	}
-	defer f.Close()
-	n, err := io.Copy(w, f)
-	return int64(n), err
+	return nil
 }
 
-func (s *fsResource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *resource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodHead, http.MethodGet:
-		s.set(w.Header())
-		if r.Method != http.MethodHead {
-			s.WriteTo(w)
-		}
+	case http.MethodGet, http.MethodHead:
+		s.writeResponse(w, r.Method != http.MethodHead)
 	default:
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	}
 }
 
-type memResource struct {
-	headers
-	body []byte
-}
-
-func (s *memResource) Open() (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(s.body)), nil
-}
-
-func (s *memResource) WriteTo(w io.Writer) (int64, error) {
-	n, err := w.Write(s.body)
-	return int64(n), err
-}
-
-func (s *memResource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodHead, http.MethodGet:
-		s.set(w.Header())
-		if r.Method != http.MethodHead {
-			s.WriteTo(w)
-		}
-	default:
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-	}
-}
-
-type resources []resource
+type resources []*resource
 
 type contentLengthSorter resources
 
 func (s contentLengthSorter) Len() int { return len(s) }
 func (s contentLengthSorter) Less(i, j int) bool {
-	if s[i].ContentLength() < s[j].ContentLength() {
+	if s[i].contentLength < s[j].contentLength {
 		return true
 	}
 	// if lengths are equal, then compare encodings
 	// this prioritizes identity encoding, followed by gzip, and then br
-	return s[i].ContentLength() == s[j].ContentLength() &&
-		s[i].ContentEncoding() < s[j].ContentEncoding()
+	return s[i].contentLength == s[j].contentLength &&
+		s[i].contentEncoding < s[j].contentEncoding
 }
 
 func (s contentLengthSorter) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
@@ -153,8 +115,8 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodHead, http.MethodGet:
 		acceptEncoding := encoding.Parse(r.Header.Get("Accept-Encoding"))
 		for _, s := range rs {
-			if acceptEncoding.Contains(s.ContentEncoding()) {
-				s.ServeHTTP(w, r)
+			if acceptEncoding.Contains(s.contentEncoding) {
+				s.writeResponse(w, r.Method != http.MethodHead)
 				return
 			}
 		}
@@ -165,9 +127,16 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
+
+	type s struct {
+		resource
+		fsFile
+	}
+
 	m := make(map[string]resources)
 	n := 16
-	rs := make([]fsResource, n)
+	rs := make([]s, n)
+
 	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -181,14 +150,16 @@ func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 		}
 		if n <= 0 {
 			n = 8
-			rs = make([]fsResource, n)
+			rs = make([]s, n)
 		}
 		n--
+
 		r := &rs[n]
+		r.fsys, r.name = fsys, path
+		r.writerTo = &r.fsFile
+
 		var ok bool
 
-		r.fsys = fsys
-		r.name = path
 		ext := filepath.Ext(path)
 		r.contentEncoding, ok = c.ContentEncodingFromExt(ext)
 		if ok {
@@ -197,10 +168,41 @@ func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 		}
 		r.contentType = c.ContentTypeFromExt(ext)
 		r.contentLength = info.Size()
-		m[path] = append(m[path], r)
+		m[path] = append(m[path], &r.resource)
 		return nil
 	})
 	return m, err
+}
+
+type responseWriter struct {
+	header      http.Header
+	w           io.Writer
+	status      int
+	wroteHeader bool
+}
+
+func (rw *responseWriter) Header() http.Header {
+	return rw.header
+}
+
+func (rw *responseWriter) WriteHeader(status int) {
+	rw.status = status
+	rw.header.Write(rw.w)
+	io.WriteString(rw.w, "\r\n")
+	rw.wroteHeader = true
+}
+
+func (rw *responseWriter) Write(p []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.WriteHeader(http.StatusOK)
+	}
+	return rw.w.Write(p)
+}
+
+func (rw *responseWriter) reset(w io.Writer) {
+	rw.header = make(http.Header, 5)
+	rw.w = w
+	rw.wroteHeader = false
 }
 
 func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]string, error) {
@@ -216,18 +218,20 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 	root := sha512.New384()
 	leaf := sha512.New384()
 	bufw := bufio.NewWriterSize(leaf, 32*sha512.BlockSize)
+	rw := &responseWriter{}
+
 	for keyPath, rs := range index {
 		if len(rs) == 0 {
 			continue
 		}
 		// Ensure an identity option exists
-		rs = rs.appendIdentity(10 << 20) // limit to under 10Mb
+		rs = rs.appendIdentity(10 << 20)
 
 		if len(rs) > 1 {
 			// Sort by ascending content-length
 			sort.Sort(contentLengthSorter(rs))
 			for _, r := range rs {
-				r.SetVary()
+				r.vary = true
 			}
 		}
 
@@ -235,11 +239,10 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 		for _, r := range rs {
 			leaf.Reset()
 			bufw.Reset(leaf)
-			h := r.set(make(http.Header, 5))
-			h.Write(bufw)
-			bufw.WriteString("\r\n")
-			if _, err := r.WriteTo(bufw); err != nil {
-				return nil, fmt.Errorf("failed to hash %q: %w", keyPath, err)
+			rw.reset(bufw)
+
+			if err := r.writeResponse(rw, true); err != nil {
+				return nil, fmt.Errorf("failed to hash %q: %v", keyPath, err)
 			}
 			bufw.Flush()
 			root.Write(leaf.Sum(bufw.AvailableBuffer()))
@@ -264,89 +267,103 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 	return srIndex, nil
 }
 
+type bodyWriter struct {
+	io.Writer
+	header http.Header
+}
+
+func (bw *bodyWriter) WriteHeader(code int) {}
+func (bw *bodyWriter) Header() http.Header  { return bw.header }
+
 func (rs resources) appendIdentity(limit int64) resources {
 	if len(rs) == 0 {
 		return rs
 	}
 	// Check if already have identity encoding
 	for _, r := range rs {
-		if r.ContentEncoding() == encoding.Identity {
+		if r.contentEncoding == encoding.Identity {
 			return rs
 		}
 	}
 
-	body, err := rs.decode(limit)
-	if err != nil {
-		return rs
-	}
-	return append(rs, &memResource{
-		headers: headers{
-			contentType:     rs[0].ContentType(),
-			contentLength:   int64(len(body)),
-			contentEncoding: encoding.Identity,
-		},
-		body: body,
-	})
-}
+	for _, sr := range rs {
+		switch sr.contentEncoding {
+		case encoding.Brotli, encoding.Gzip:
 
-func (rs resources) decode(limit int64) ([]byte, error) {
-	for _, r := range rs {
-		if b, err := decodeAll(r, limit); err == nil {
-			return b, nil
+			r, w := io.Pipe()
+			go func() {
+				bw := &bodyWriter{w, make(http.Header, 0)}
+				err := sr.writeResponse(bw, true)
+				w.CloseWithError(err)
+			}()
+
+			var d io.ReadCloser
+			switch sr.contentEncoding {
+			case encoding.Gzip:
+				var err error
+				d, err = gzip.NewReader(r)
+				if err != nil {
+					return rs
+				}
+			case encoding.Brotli:
+				d = cbrotli.NewReader(r)
+			}
+			defer d.Close()
+
+			size := sr.contentLength
+			if size > limit {
+				return rs
+			}
+			if size < 1<<30 {
+				size *= 3 // Assume 66% compression rate for intial buffer sizing
+			}
+
+			body, err := readAll(d, make([]byte, size), limit)
+			if err != nil {
+				return rs
+			}
+			return append(rs, &resource{
+				contentType:     sr.contentType,
+				contentLength:   int64(len(body)),
+				contentEncoding: encoding.Identity,
+				writerTo:        slice(body),
+			})
 		}
 	}
-	return nil, errors.New("unable to decode")
+	return nil
 }
 
-func decodeAll(r resource, limit int64) ([]byte, error) {
-	f, err := r.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var d io.ReadCloser
-	switch r.ContentEncoding() {
-	case encoding.Gzip:
-		d, err = gzip.NewReader(f)
-		if err != nil {
-			return nil, err
-		}
-	case encoding.Brotli:
-		d = cbrotli.NewReader(f)
-	default:
-		return nil, fmt.Errorf("unable to decode %s", r.ContentEncoding().String())
-	}
-	defer d.Close()
-
-	size := r.ContentLength()
-	if size > limit {
-		return nil, errors.New("compressed size already exceeds limit")
-	}
-	if size < 10<<20 {
-		size *= 3 // Assume 66% compression rate for intial buffer sizing
-	}
-	return readAll(d, size, limit)
-}
-
-func readAll(r io.Reader, size, limit int64) ([]byte, error) {
-	b := make([]byte, size)
-	n, err := r.Read(b)
+func readAll(r io.Reader, p []byte, limit int64) ([]byte, error) {
+	n, err := r.Read(p)
 	i := int64(n)
 	for ; err == nil; i += int64(n) {
-		if i >= int64(len(b)) {
-			if int64(len(b)) >= limit {
+		if i >= int64(len(p)) {
+			if int64(len(p)) >= limit {
 				return nil, errors.New("size limit exceeded")
 			}
-			b = append(b, 0)
-			b = b[:cap(b)]
+			p = append(p, 0)
+			p = p[:cap(p)]
 		}
-		n, err = r.Read(b[i:])
+		n, err = r.Read(p[i:])
 	}
 	if err == io.EOF {
-		return b[:i], nil
+		return p[:i], nil
 	}
 	return nil, err
+}
+
+func ErrError(w http.ResponseWriter, err error) {
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, fs.ErrNotExist):
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	case errors.Is(err, fs.ErrPermission):
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
 // ensureValue ensures value will be present in returned slice of values.
