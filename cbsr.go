@@ -111,6 +111,7 @@ func (s contentLengthSorter) Less(i, j int) bool {
 func (s contentLengthSorter) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	status := http.StatusMethodNotAllowed
 	switch r.Method {
 	case http.MethodHead, http.MethodGet:
 		acceptEncoding := encoding.Parse(r.Header.Get("Accept-Encoding"))
@@ -120,10 +121,9 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		http.Error(w, http.StatusText(http.StatusNotAcceptable), http.StatusNotAcceptable)
-	default:
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		status = http.StatusNotAcceptable
 	}
+	http.Error(w, http.StatusText(status), http.StatusMethodNotAllowed)
 }
 
 func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
