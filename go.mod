@@ -1,4 +1,4 @@
-module renthraysk/cbsr
+module github.com/renthraysk/cbsr
 
 go 1.18
 
