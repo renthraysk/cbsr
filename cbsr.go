@@ -123,7 +123,7 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		status = http.StatusNotAcceptable
 	}
-	http.Error(w, http.StatusText(status), http.StatusMethodNotAllowed)
+	http.Error(w, http.StatusText(status), status)
 }
 
 func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
