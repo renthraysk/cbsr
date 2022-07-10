@@ -13,7 +13,7 @@ If multiple encoded versions exist in the embeded file system, eg.
 this will perform negotiation per request, between the 3 encodings.
 
 It is server driven content negotation. It ignores user agent q values, unless they are 0.
-The encoding that has the shortest size that the user agent supports is what is sent.
+The encoding that has the smallest size that the user agent supports is what is sent.
 If two encodings share the same size, then identity, gzip, brotli is this order of preference.
 
 ## Cache busting URLs
