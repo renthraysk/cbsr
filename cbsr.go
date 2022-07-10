@@ -353,17 +353,16 @@ func readAll(r io.Reader, p []byte, limit int64) ([]byte, error) {
 }
 
 func ErrError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
 	switch {
 	case err == nil:
 		return
 	case errors.Is(err, fs.ErrNotExist):
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		return
+		status = http.StatusNotFound
 	case errors.Is(err, fs.ErrPermission):
-		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-		return
+		status = http.StatusForbidden
 	}
-	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	http.Error(w, http.StatusText(status), status)
 }
 
 // ensureValue ensures value will be present in returned slice of values.
