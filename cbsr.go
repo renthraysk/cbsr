@@ -85,12 +85,17 @@ func (s *resource) writeResponse(w http.ResponseWriter, body bool) error {
 }
 
 func (s *resource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	status := http.StatusMethodNotAllowed
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		s.writeResponse(w, r.Method != http.MethodHead)
-	default:
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		acceptEncoding := encoding.Parse(r.Header.Get("Accept-Encoding"))
+		if acceptEncoding.Contains(s.contentEncoding) {
+			s.writeResponse(w, r.Method != http.MethodHead)
+			return
+		}
+		status = http.StatusNotAcceptable
 	}
+	http.Error(w, http.StatusText(status), status)
 }
 
 type resources []*resource
@@ -311,11 +316,12 @@ func (rs resources) appendIdentity(limit int64) resources {
 			defer d.Close()
 
 			size := sr.contentLength
+
+			if size < 10<<20 {
+				size *= 3 // Assume 66% compression rate for intial buffer sizing
+			}
 			if size > limit {
 				return rs
-			}
-			if size < 1<<30 {
-				size *= 3 // Assume 66% compression rate for intial buffer sizing
 			}
 
 			body, err := readAll(d, make([]byte, size), limit)
@@ -326,6 +332,7 @@ func (rs resources) appendIdentity(limit int64) resources {
 				contentType:     sr.contentType,
 				contentLength:   int64(len(body)),
 				contentEncoding: encoding.Identity,
+				vary:            true,
 				writerTo:        slice(body),
 			})
 		}
