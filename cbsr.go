@@ -278,6 +278,10 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 		ext := filepath.Ext(relPath)
 		vPath := strings.TrimSuffix(relPath, ext) + "-" + ver + ext
 
+		if vPath[0] != '/' {
+			vPath = "/" + vPath
+		}
+
 		srIndex[keyPath] = vPath
 
 		switch len(rs) {
