@@ -19,18 +19,22 @@ import (
 	"github.com/renthraysk/encoding"
 )
 
+// slice provides a io.WriterTo implementation on a regular byte slice.
 type slice []byte
 
+// WriteTo io.WriterTo implementation
 func (s slice) WriteTo(w io.Writer) (int64, error) {
 	n, err := w.Write(s)
 	return int64(n), err
 }
 
+// fsFile provides a io.Writer implementation on a file residing in an fs.FS
 type fsFile struct {
 	fsys fs.FS
 	name string
 }
 
+// WriteTo io.WriterTo implementation
 func (z *fsFile) WriteTo(w io.Writer) (int64, error) {
 	f, err := z.fsys.Open(z.name)
 	if err != nil {
@@ -40,6 +44,7 @@ func (z *fsFile) WriteTo(w io.Writer) (int64, error) {
 	return io.Copy(w, f)
 }
 
+// resource represents as http resource.
 type resource struct {
 	contentType     string
 	contentLength   int64
@@ -48,6 +53,13 @@ type resource struct {
 	writerTo        io.WriterTo
 }
 
+// set sets the following http headers in dst
+// - Content-Type
+// - Content-Length
+// - ptionally Content-Encoding if the body is encoded
+// - Vary is ensured to contain "Accept-Encoding" if the
+// resouce has multiple variants.
+// - Cache-Control if not set, it's set to immutable.
 func (s *resource) set(dst http.Header) {
 	v := [...]string{
 		s.contentType,
@@ -84,6 +96,7 @@ func (s *resource) writeResponse(w http.ResponseWriter, body bool) error {
 	return nil
 }
 
+// ServeHTTP http.Handler implementation
 func (s *resource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusMethodNotAllowed
 	switch r.Method {
@@ -115,6 +128,7 @@ func (s contentLengthSorter) Less(i, j int) bool {
 
 func (s contentLengthSorter) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
+// ServeHTTP http.Handler implementation
 func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusMethodNotAllowed
 	switch r.Method {
@@ -133,14 +147,14 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 
-	type s struct {
+	type fsResource struct {
 		resource
 		fsFile
 	}
 
 	m := make(map[string]resources)
 	n := 16
-	rs := make([]s, n)
+	rs := make([]fsResource, n)
 
 	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -155,7 +169,7 @@ func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 		}
 		if n <= 0 {
 			n = 8
-			rs = make([]s, n)
+			rs = make([]fsResource, n)
 		}
 		n--
 
@@ -210,6 +224,11 @@ func (rw *responseWriter) reset(w io.Writer) {
 	rw.wroteHeader = false
 }
 
+// RegisterFS traverses the fs.FS and registers a cache busting pattern for each group of files.
+// It returns a map keyed by the file name from the fs.FS and the path to which the mux will
+// handle.
+// Intended to be passed to templates so ```{{index .SubResources "/static/js/default.js"}}``` will
+// be replaced with the cache busting path.
 func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]string, error) {
 
 	classifier := defaultClassifier{}
@@ -359,7 +378,7 @@ func readAll(r io.Reader, p []byte, limit int64) ([]byte, error) {
 	return nil, err
 }
 
-func ErrError(w http.ResponseWriter, err error) {
+func errError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
 	case err == nil:
