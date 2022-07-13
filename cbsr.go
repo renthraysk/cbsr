@@ -66,7 +66,7 @@ func (s *resource) set(dst http.Header) {
 		strconv.FormatInt(s.contentLength, 10),
 		s.contentEncoding.String(),
 		"Accept-Encoding",
-		"max-age=31536000, immutable",
+		"public, max-age=31536000, immutable",
 	}
 	dst["Content-Type"] = v[:1:1]
 	dst["Content-Length"] = v[1:2:2]
@@ -239,8 +239,8 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 	}
 	srIndex := make(map[string]string, len(index))
 
-	root := sha512.New384()
-	leaf := sha512.New384()
+	root := sha512.New()
+	leaf := sha512.New()
 	bufw := bufio.NewWriterSize(leaf, 32*sha512.BlockSize)
 	rw := &responseWriter{}
 
