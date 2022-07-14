@@ -1,6 +1,10 @@
 package cbsr
 
-import "github.com/renthraysk/encoding"
+import (
+	"mime"
+
+	"github.com/renthraysk/encoding"
+)
 
 type Classifier interface {
 	ContentTypeFromExt(ext string) string
@@ -44,6 +48,22 @@ func (defaultClassifier) ContentTypeFromExt(ext string) string {
 }
 
 func (defaultClassifier) ContentEncodingFromExt(ext string) (encoding.Encoding, bool) {
+	switch ext {
+	case ".br":
+		return encoding.Brotli, true
+	case ".gz":
+		return encoding.Gzip, true
+	}
+	return encoding.Identity, false
+}
+
+type mimeClassifier struct{}
+
+func (mimeClassifier) ContentTypeFromExt(ext string) string {
+	return mime.TypeByExtension(ext)
+}
+
+func (mimeClassifier) ContentEncodingFromExt(ext string) (encoding.Encoding, bool) {
 	switch ext {
 	case ".br":
 		return encoding.Brotli, true
