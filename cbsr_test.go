@@ -58,7 +58,7 @@ func TestMethodNotAllowed(t *testing.T) {
 	for _, method := range []string{"POST", "PUT", "DELETE", "CONNECT", "OPTIONS"} {
 		r := httptest.NewRecorder()
 		mux.ServeHTTP(r, newRequest(t, method, srIndex[paths[0]], "*"))
-		assert(t, "Status", http.StatusMethodNotAllowed, r.Code)
+		assertStatus(t, http.StatusMethodNotAllowed, r.Code)
 	}
 }
 
@@ -67,7 +67,7 @@ func TestNotAcceptable(t *testing.T) {
 	for _, acceptEncoding := range []string{"*;q=0", "identity;q=0"} {
 		r := httptest.NewRecorder()
 		mux.ServeHTTP(r, newRequest(t, "HEAD", srIndex[paths[0]], acceptEncoding))
-		assert(t, "Status", http.StatusNotAcceptable, r.Code)
+		assertStatus(t, http.StatusNotAcceptable, r.Code)
 	}
 }
 
