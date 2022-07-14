@@ -360,7 +360,7 @@ func (rs resources) appendIdentity(limit int64) resources {
 			})
 		}
 	}
-	return nil
+	return rs
 }
 
 func readAll(r io.Reader, p []byte, limit int64) ([]byte, error) {
