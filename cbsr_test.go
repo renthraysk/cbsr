@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -24,7 +25,10 @@ type test struct {
 const AE = "Accept-Encoding"
 
 var methods = []string{"GET", "HEAD"}
-var paths = []string{"testdata/static/js/2.js", "testdata/static/js/3.js"}
+var paths = map[string]string{
+	"testdata/static/js/2.js": "text/javascript; charset=UTF-8",
+	"testdata/static/js/3.js": "text/javascript; charset=UTF-8",
+}
 
 // Accept-Encoding => Content-Encoding
 var encodings = map[string]string{
@@ -57,7 +61,7 @@ func TestMethodNotAllowed(t *testing.T) {
 	mux, srIndex := getMux(t)
 	for _, method := range []string{"POST", "PUT", "DELETE", "CONNECT", "OPTIONS"} {
 		r := httptest.NewRecorder()
-		mux.ServeHTTP(r, newRequest(t, method, srIndex[paths[0]], "*"))
+		mux.ServeHTTP(r, newRequest(t, method, srIndex["testdata/static/js/2.js"], "*"))
 		assertStatus(t, http.StatusMethodNotAllowed, r.Code)
 	}
 }
@@ -66,7 +70,7 @@ func TestNotAcceptable(t *testing.T) {
 	mux, srIndex := getMux(t)
 	for _, acceptEncoding := range []string{"*;q=0", "identity;q=0"} {
 		r := httptest.NewRecorder()
-		mux.ServeHTTP(r, newRequest(t, "HEAD", srIndex[paths[0]], acceptEncoding))
+		mux.ServeHTTP(r, newRequest(t, "HEAD", srIndex["testdata/static/js/2.js"], acceptEncoding))
 		assertStatus(t, http.StatusNotAcceptable, r.Code)
 	}
 }
@@ -74,15 +78,16 @@ func TestNotAcceptable(t *testing.T) {
 func TestOK(t *testing.T) {
 	mux, srIndex := getMux(t)
 	for _, method := range methods {
-		for _, path := range paths {
+		for path, contentType := range paths {
 			for acceptEncoding, contentEncoding := range encodings {
 				t.Run(fmt.Sprintf("%s %s %s", method, path, acceptEncoding), func(t *testing.T) {
 					r := httptest.NewRecorder()
 					mux.ServeHTTP(r, newRequest(t, method, srIndex[path], acceptEncoding))
 					assertStatus(t, http.StatusOK, r.Code)
 					if r.Code == http.StatusOK {
-						assert(t, "Content-Encoding", contentEncoding, r.Header().Get("Content-Encoding"))
-						assert(t, "Vary", "Accept-Encoding", r.Header().Get("Vary"))
+						assertEqualFold(t, "Content-Type", contentType, r.Header().Get("Content-Type"))
+						assertEqualFold(t, "Content-Encoding", contentEncoding, r.Header().Get("Content-Encoding"))
+						assertEqualFold(t, "Vary", "Accept-Encoding", r.Header().Get("Vary"))
 					}
 				})
 			}
@@ -94,6 +99,13 @@ func assertStatus(t *testing.T, expected, got int) {
 	t.Helper()
 	if expected != got {
 		t.Fatalf("Status expected %v %q, got %v %q", expected, http.StatusText(expected), got, http.StatusText(got))
+	}
+}
+
+func assertEqualFold(t *testing.T, name, expected, got string) {
+	t.Helper()
+	if !strings.EqualFold(expected, got) {
+		t.Fatalf("%s expected %v, got %v", name, expected, got)
 	}
 }
 
