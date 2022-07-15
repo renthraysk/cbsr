@@ -19,13 +19,11 @@ import (
 	"github.com/renthraysk/encoding"
 )
 
-// slice provides a io.WriterTo implementation on a regular byte slice.
-type slice []byte
-
-// WriteTo io.WriterTo implementation
-func (s slice) WriteTo(w io.Writer) (int64, error) {
-	n, err := w.Write(s)
-	return int64(n), err
+func writerTo(b []byte) func(w io.Writer) (int64, error) {
+	return func(w io.Writer) (int64, error) {
+		n, err := w.Write(b)
+		return int64(n), err
+	}
 }
 
 // fsFile provides a io.Writer implementation on a file residing in an fs.FS
@@ -34,8 +32,7 @@ type fsFile struct {
 	name string
 }
 
-// WriteTo io.WriterTo implementation
-func (z *fsFile) WriteTo(w io.Writer) (int64, error) {
+func (z *fsFile) writeTo(w io.Writer) (int64, error) {
 	f, err := z.fsys.Open(z.name)
 	if err != nil {
 		return 0, err
@@ -48,9 +45,9 @@ func (z *fsFile) WriteTo(w io.Writer) (int64, error) {
 type resource struct {
 	contentType     string
 	contentLength   int64
+	writerTo        func(w io.Writer) (int64, error)
 	contentEncoding encoding.Encoding
 	vary            bool
-	writerTo        io.WriterTo
 }
 
 // set sets the following http headers in dst
@@ -90,7 +87,7 @@ func (s *resource) set(dst http.Header) {
 func (s *resource) writeResponse(w http.ResponseWriter, body bool) error {
 	s.set(w.Header())
 	if body {
-		_, err := s.writerTo.WriteTo(w)
+		_, err := s.writerTo(w)
 		return err
 	}
 	return nil
@@ -152,8 +149,8 @@ func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 		fsFile
 	}
 
-	m := make(map[string]resources)
 	n := 16
+	m := make(map[string]resources, n)
 	rs := make([]fsResource, n)
 
 	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
@@ -175,7 +172,7 @@ func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 
 		r := &rs[n]
 		r.fsys, r.name = fsys, path
-		r.writerTo = &r.fsFile
+		r.writerTo = r.fsFile.writeTo
 
 		var ok bool
 
@@ -313,54 +310,63 @@ func (rs resources) appendIdentity(limit int64) resources {
 			return rs
 		}
 	}
-
-	for _, sr := range rs {
-		switch sr.contentEncoding {
-		case encoding.Brotli, encoding.Gzip:
-
-			r, w := io.Pipe()
-			go func() {
-				bw := &bodyWriter{w, make(http.Header, 0)}
-				err := sr.writeResponse(bw, true)
-				w.CloseWithError(err)
-			}()
-
-			var d io.ReadCloser
-			switch sr.contentEncoding {
-			case encoding.Gzip:
-				var err error
-				d, err = gzip.NewReader(r)
-				if err != nil {
-					return rs
-				}
-			case encoding.Brotli:
-				d = cbrotli.NewReader(r)
-			}
-			defer d.Close()
-
-			size := sr.contentLength
-
-			if size < 10<<20 {
-				size *= 3 // Assume 66% compression rate for intial buffer sizing
-			}
-			if size > limit {
-				return rs
-			}
-
-			body, err := readAll(d, make([]byte, size), limit)
-			if err != nil {
-				return rs
-			}
-			return append(rs, &resource{
-				contentType:     sr.contentType,
-				contentLength:   int64(len(body)),
-				contentEncoding: encoding.Identity,
-				vary:            true,
-				writerTo:        slice(body),
-			})
+	for _, r := range rs {
+		id, err := decode(r, limit)
+		if err == nil && id != r {
+			return append(rs, id)
 		}
 	}
 	return rs
+}
+
+func decode(rs *resource, limit int64) (*resource, error) {
+	switch rs.contentEncoding {
+	case encoding.Identity:
+		return rs, nil
+	case encoding.Brotli, encoding.Gzip:
+
+		r, w := io.Pipe()
+		go func() {
+			bw := &bodyWriter{w, make(http.Header, 0)}
+			err := rs.writeResponse(bw, true)
+			w.CloseWithError(err)
+		}()
+
+		var d io.ReadCloser
+		switch rs.contentEncoding {
+		case encoding.Gzip:
+			var err error
+			d, err = gzip.NewReader(r)
+			if err != nil {
+				return nil, err
+			}
+		case encoding.Brotli:
+			d = cbrotli.NewReader(r)
+		}
+		defer d.Close()
+
+		size := rs.contentLength
+
+		if size < 10<<20 {
+			size *= 3 // Assume 66% compression rate for intial buffer sizing
+		}
+		if size > limit {
+			size = limit
+		}
+
+		body, err := readAll(d, make([]byte, size), limit)
+		if err != nil {
+			return nil, fmt.Errorf("failed to readAll: %w", err)
+		}
+		return &resource{
+			contentType:     rs.contentType,
+			contentLength:   int64(len(body)),
+			contentEncoding: encoding.Identity,
+			vary:            true,
+			writerTo:        writerTo(body),
+		}, nil
+	}
+	return nil, errors.New("unable to decode")
 }
 
 func readAll(r io.Reader, p []byte, limit int64) ([]byte, error) {
