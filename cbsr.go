@@ -47,22 +47,18 @@ type resource struct {
 	contentLength   int64
 	writerTo        func(w io.Writer) (int64, error)
 	contentEncoding encoding.Encoding
-	vary            bool
 }
 
 // set sets the following http headers in dst
 // - Content-Type
 // - Content-Length
-// - ptionally Content-Encoding if the body is encoded
-// - Vary is ensured to contain "Accept-Encoding" if the
-// resouce has multiple variants.
+// - Content-Encoding if the body is encoded
 // - Cache-Control if not set, it's set to immutable.
 func (s *resource) set(dst http.Header) {
 	v := [...]string{
 		s.contentType,
 		strconv.FormatInt(s.contentLength, 10),
 		s.contentEncoding.String(),
-		"Accept-Encoding",
 		"public, max-age=31536000, immutable",
 	}
 	dst["Content-Type"] = v[:1:1]
@@ -70,17 +66,10 @@ func (s *resource) set(dst http.Header) {
 	if s.contentEncoding != encoding.Identity {
 		dst["Content-Encoding"] = v[2:3:3]
 	}
-	if s.vary {
-		vary := v[3:4:4]
-		if v, ok := dst["Vary"]; ok {
-			vary = ensureValue(v, "Accept-Encoding")
-		}
-		dst["Vary"] = vary
-	}
 	// Probably not a good idea to discard an existing
 	// Cache-Control header for an immutable one
 	if _, ok := dst["Cache-Control"]; !ok {
-		dst["Cache-Control"] = v[4:5:5]
+		dst["Cache-Control"] = v[3:4:4]
 	}
 }
 
@@ -127,10 +116,20 @@ func (s contentLengthSorter) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 // ServeHTTP http.Handler implementation
 func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	const acceptEncoding = "Accept-Encoding"
+
 	status := http.StatusMethodNotAllowed
 	switch r.Method {
 	case http.MethodHead, http.MethodGet:
-		acceptEncoding := encoding.Parse(r.Header.Get("Accept-Encoding"))
+		vary := []string{acceptEncoding}
+		if v, ok := w.Header()["Vary"]; ok {
+			if vary, ok = ensureValue(v, acceptEncoding); !ok {
+				w.Header()["Vary"] = vary
+			}
+		} else {
+			w.Header()["Vary"] = vary
+		}
+		acceptEncoding := encoding.Parse(r.Header.Get(acceptEncoding))
 		for _, s := range rs {
 			if acceptEncoding.Contains(s.contentEncoding) {
 				s.writeResponse(w, r.Method != http.MethodHead)
@@ -251,9 +250,6 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 		if len(rs) > 1 {
 			// Sort by ascending content-length
 			sort.Sort(contentLengthSorter(rs))
-			for _, r := range rs {
-				r.vary = true
-			}
 		}
 
 		root.Reset()
@@ -362,7 +358,6 @@ func decode(rs *resource, limit int64) (*resource, error) {
 			contentType:     rs.contentType,
 			contentLength:   int64(len(body)),
 			contentEncoding: encoding.Identity,
-			vary:            true,
 			writerTo:        writerTo(body),
 		}, nil
 	}
@@ -402,11 +397,11 @@ func errError(w http.ResponseWriter, err error) {
 }
 
 // ensureValue ensures value will be present in returned slice of values.
-func ensureValue[T comparable](values []T, value T) []T {
+func ensureValue[T comparable](values []T, value T) ([]T, bool) {
 	for _, v := range values {
 		if v == value {
-			return values
+			return values, true
 		}
 	}
-	return append(values, value)
+	return append(values, value), false
 }
