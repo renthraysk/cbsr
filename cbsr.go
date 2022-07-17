@@ -26,7 +26,7 @@ func writerTo(b []byte) func(w io.Writer) (int64, error) {
 	}
 }
 
-// fsFile provides a io.Writer implementation on a file residing in an fs.FS
+// fsFile provides a writeTo implementation on a file residing in an fs.FS
 type fsFile struct {
 	fsys fs.FS
 	name string
@@ -347,7 +347,7 @@ func decode(rs *resource, limit int64) (*resource, error) {
 			size = limit
 		}
 
-		body, err := readAll(d, make([]byte, size), limit)
+		body, err := readAll(d, size, limit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to readAll: %w", err)
 		}
@@ -361,7 +361,8 @@ func decode(rs *resource, limit int64) (*resource, error) {
 	return nil, errors.New("unable to decode")
 }
 
-func readAll(r io.Reader, p []byte, limit int64) ([]byte, error) {
+func readAll(r io.Reader, size, limit int64) ([]byte, error) {
+	p := make([]byte, size)
 	n, err := r.Read(p)
 	i := int64(n)
 	for ; err == nil; i += int64(n) {
