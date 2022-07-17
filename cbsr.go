@@ -123,12 +123,9 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodHead, http.MethodGet:
 		vary := []string{acceptEncoding}
 		if v, ok := w.Header()["Vary"]; ok {
-			if vary, ok = ensureValue(v, acceptEncoding); !ok {
-				w.Header()["Vary"] = vary
-			}
-		} else {
-			w.Header()["Vary"] = vary
+			vary = ensureValue(v, acceptEncoding)
 		}
+		w.Header()["Vary"] = vary
 		acceptEncoding := encoding.Parse(r.Header.Get(acceptEncoding))
 		for _, s := range rs {
 			if acceptEncoding.Contains(s.contentEncoding) {
@@ -397,11 +394,11 @@ func errError(w http.ResponseWriter, err error) {
 }
 
 // ensureValue ensures value will be present in returned slice of values.
-func ensureValue[T comparable](values []T, value T) ([]T, bool) {
+func ensureValue[T comparable](values []T, value T) []T {
 	for _, v := range values {
 		if v == value {
-			return values, true
+			return values
 		}
 	}
-	return append(values, value), false
+	return append(values, value)
 }
