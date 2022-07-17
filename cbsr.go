@@ -116,19 +116,19 @@ func (s contentLengthSorter) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 // ServeHTTP http.Handler implementation
 func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	const acceptEncoding = "Accept-Encoding"
-
 	status := http.StatusMethodNotAllowed
 	switch r.Method {
 	case http.MethodHead, http.MethodGet:
-		vary := []string{acceptEncoding}
-		if v, ok := w.Header()["Vary"]; ok {
-			vary = ensureValue(v, acceptEncoding)
-		}
-		w.Header()["Vary"] = vary
-		acceptEncoding := encoding.Parse(r.Header.Get(acceptEncoding))
+		acceptEncoding := encoding.Parse(r.Header.Get("Accept-Encoding"))
 		for _, s := range rs {
 			if acceptEncoding.Contains(s.contentEncoding) {
+
+				vary := []string{"Accept-Encoding"}
+				if v, ok := w.Header()["Vary"]; ok {
+					vary = ensureValue(v, "Accept-Encoding")
+				}
+				w.Header()["Vary"] = vary
+
 				s.writeResponse(w, r.Method != http.MethodHead)
 				return
 			}
