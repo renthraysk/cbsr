@@ -38,7 +38,7 @@ func (defaultClassifier) ContentTypeFromExt(ext string) string {
 	case ".txt":
 		return "text/plain; charset=utf-8"
 	case ".wasm":
-		return "appliction/wasm"
+		return "application/wasm"
 	case ".webp":
 		return "image/webp"
 	case ".xml":
