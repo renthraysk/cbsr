@@ -5,24 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 //go:embed testdata
 var testdata embed.FS
-
-type test struct {
-	Path   string
-	Method string
-	AE     string
-
-	Status int
-	CE     string
-	Vary   string
-}
-
-const AE = "Accept-Encoding"
 
 var methods = []string{"GET", "HEAD"}
 var paths = map[string]string{
@@ -82,12 +71,24 @@ func TestOK(t *testing.T) {
 			for acceptEncoding, contentEncoding := range encodings {
 				t.Run(fmt.Sprintf("%s %s %s", method, path, acceptEncoding), func(t *testing.T) {
 					r := httptest.NewRecorder()
+
 					mux.ServeHTTP(r, newRequest(t, method, srIndex[path], acceptEncoding))
+
 					assertStatus(t, http.StatusOK, r.Code)
 					if r.Code == http.StatusOK {
 						assertEqualFold(t, "Content-Type", contentType, r.Header().Get("Content-Type"))
 						assertEqualFold(t, "Content-Encoding", contentEncoding, r.Header().Get("Content-Encoding"))
 						assertEqualFold(t, "Vary", "Accept-Encoding", r.Header().Get("Vary"))
+						switch method {
+						case http.MethodGet:
+							contentLength, err := strconv.Atoi(r.Header().Get("Content-Length"))
+							if err != nil {
+								t.Errorf("failed to parse Content-Length: %v", err)
+							}
+							assert(t, "body length", r.Body.Len(), contentLength)
+						case http.MethodHead:
+							assert(t, "body length", r.Body.Len(), 0)
+						}
 					}
 				})
 			}
