@@ -189,7 +189,6 @@ func index(fsys fs.FS, c Classifier) (map[string]resources, error) {
 type responseWriter struct {
 	header      http.Header
 	w           io.Writer
-	status      int
 	wroteHeader bool
 }
 
@@ -198,7 +197,6 @@ func (rw *responseWriter) Header() http.Header {
 }
 
 func (rw *responseWriter) WriteHeader(status int) {
-	rw.status = status
 	rw.header.Write(rw.w)
 	io.WriteString(rw.w, "\r\n")
 	rw.wroteHeader = true
@@ -241,6 +239,7 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 		if len(rs) == 0 {
 			continue
 		}
+
 		// Ensure an identity option exists
 		rs = rs.appendIdentity(10 << 20)
 
@@ -285,14 +284,6 @@ func RegisterFS(mux *http.ServeMux, fsys fs.FS, prefix string) (map[string]strin
 	return srIndex, nil
 }
 
-type bodyWriter struct {
-	io.Writer
-	header http.Header
-}
-
-func (bw *bodyWriter) WriteHeader(code int) {}
-func (bw *bodyWriter) Header() http.Header  { return bw.header }
-
 func (rs resources) appendIdentity(limit int64) resources {
 	if len(rs) == 0 {
 		return rs
@@ -320,8 +311,7 @@ func decode(rs *resource, limit int64) (*resource, error) {
 
 		r, w := io.Pipe()
 		go func() {
-			bw := &bodyWriter{w, make(http.Header, 0)}
-			err := rs.writeResponse(bw, true)
+			_, err := rs.writerTo(w)
 			w.CloseWithError(err)
 		}()
 
