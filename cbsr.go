@@ -93,6 +93,9 @@ func (s *resource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		status = http.StatusNotAcceptable
+	case http.MethodOptions:
+		w.Header().Set("Allow", "OPTIONS, GET, HEAD")
+		return
 	}
 	http.Error(w, http.StatusText(status), status)
 }
@@ -134,6 +137,10 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		status = http.StatusNotAcceptable
+
+	case http.MethodOptions:
+		w.Header().Set("Allow", "OPTIONS, GET, HEAD")
+		return
 	}
 	http.Error(w, http.StatusText(status), status)
 }
