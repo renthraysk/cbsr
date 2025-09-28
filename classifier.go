@@ -53,6 +53,8 @@ func (defaultClassifier) ContentEncodingFromExt(ext string) (encoding.Encoding, 
 		return encoding.Brotli, true
 	case ".gz":
 		return encoding.Gzip, true
+	case ".zst":
+		return encoding.Zstd, true
 	}
 	return encoding.Identity, false
 }
@@ -69,6 +71,8 @@ func (mimeClassifier) ContentEncodingFromExt(ext string) (encoding.Encoding, boo
 		return encoding.Brotli, true
 	case ".gz":
 		return encoding.Gzip, true
+	case ".zst":
+		return encoding.Zstd, true
 	}
 	return encoding.Identity, false
 }

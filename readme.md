@@ -20,7 +20,7 @@ If two encodings share the same size, then identity, gzip, brotli is this order 
 
 A hash is inserted into the base name (filename without any encoding filename extension).
 	
-So the 3 files in example above will be negotation between from a single ``http.Handler`` registered with ``http.ServeMux`` with a pattern of "``js/default.<hash>.js``".
+So the 3 files in example above will be negotated between from a single ``http.Handler`` registered with ``http.ServeMux`` with a pattern of "``js/default.<hash>.js``".
 
 The hash is derived by hashing over each variant response (http header & bodies) in ascending size. So any change in any response, or relative ordering should generate a new hash, and therefore cause user agents to fetch the most up to date version.
 

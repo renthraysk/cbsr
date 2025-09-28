@@ -1,8 +1,9 @@
 module github.com/renthraysk/cbsr
 
-go 1.18
+go 1.22
 
 require (
-	github.com/google/brotli/go/cbrotli v0.0.0-20220512075048-9801a2c5d6c6
-	github.com/renthraysk/encoding v0.0.0-20220702132153-eb24a81d4f09
+	github.com/google/brotli/go/cbrotli v1.1.0
+	github.com/klauspost/compress v1.18.0
+	github.com/renthraysk/encoding v0.0.0-20250927153452-97e3b0169e52
 )

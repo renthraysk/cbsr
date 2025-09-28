@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/google/brotli/go/cbrotli"
+	"github.com/klauspost/compress/zstd"
 	"github.com/renthraysk/encoding"
 )
 
@@ -87,7 +88,7 @@ func (s *resource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusMethodNotAllowed
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		acceptEncoding := encoding.Parse(r.Header.Get("Accept-Encoding"))
+		acceptEncoding := encoding.ParseAcceptEncoding(r.Header.Get("Accept-Encoding"))
 		if acceptEncoding.Contains(s.contentEncoding) {
 			s.writeResponse(w, r.Method != http.MethodHead)
 			return
@@ -122,16 +123,10 @@ func (rs resources) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusMethodNotAllowed
 	switch r.Method {
 	case http.MethodHead, http.MethodGet:
-		acceptEncoding := encoding.Parse(r.Header.Get("Accept-Encoding"))
+		acceptEncoding := encoding.ParseAcceptEncoding(r.Header.Get("Accept-Encoding"))
 		for _, s := range rs {
 			if acceptEncoding.Contains(s.contentEncoding) {
-
-				vary := []string{"Accept-Encoding"}
-				if v, ok := w.Header()["Vary"]; ok {
-					vary = ensureValue(v, "Accept-Encoding")
-				}
-				w.Header()["Vary"] = vary
-
+				ensureHeaderValue(w.Header(), "Vary", "Accept-Encoding")
 				s.writeResponse(w, r.Method != http.MethodHead)
 				return
 			}
@@ -310,52 +305,63 @@ func (rs resources) appendIdentity(limit int64) resources {
 	return rs
 }
 
-func decode(rs *resource, limit int64) (*resource, error) {
-	switch rs.contentEncoding {
-	case encoding.Identity:
-		return rs, nil
-	case encoding.Brotli, encoding.Gzip:
-
-		r, w := io.Pipe()
-		go func() {
-			_, err := rs.writerTo(w)
-			w.CloseWithError(err)
-		}()
-
-		var d io.ReadCloser
-		switch rs.contentEncoding {
-		case encoding.Gzip:
-			var err error
-			d, err = gzip.NewReader(r)
-			if err != nil {
-				return nil, err
-			}
-		case encoding.Brotli:
-			d = cbrotli.NewReader(r)
-		}
-		defer d.Close()
-
-		size := rs.contentLength
-
-		if size < 10<<20 {
-			size *= 3 // Assume 66% compression rate for intial buffer sizing
-		}
-		if size > limit {
-			size = limit
-		}
-
-		body, err := readAll(d, size, limit)
+func decodeWrap(enc encoding.Encoding, r io.Reader) (io.Reader, func() error, error) {
+	switch enc {
+	case encoding.Zstd:
+		wr, err := zstd.NewReader(r)
 		if err != nil {
-			return nil, fmt.Errorf("failed to readAll: %w", err)
+			return nil, nil, err
 		}
-		return &resource{
-			contentType:     rs.contentType,
-			contentLength:   int64(len(body)),
-			contentEncoding: encoding.Identity,
-			writerTo:        writerTo(body),
-		}, nil
+		return wr, func() error { wr.Close(); return nil }, nil
+
+	case encoding.Gzip:
+		wr, err := gzip.NewReader(r)
+		if err != nil {
+			return nil, nil, err
+		}
+		return wr, wr.Close, nil
+
+	case encoding.Brotli:
+		wr := cbrotli.NewReader(r)
+		return wr, wr.Close, nil
 	}
-	return nil, errors.New("unable to decode")
+	return nil, nil, fmt.Errorf("unable to decode %s", enc)
+}
+
+func decode(rs *resource, limit int64) (*resource, error) {
+	if rs.contentEncoding == encoding.Identity {
+		return rs, nil
+	}
+	r, w := io.Pipe()
+
+	wr, close, err := decodeWrap(rs.contentEncoding, r)
+	if err != nil {
+		return nil, err
+	}
+	size := rs.contentLength
+	if size < 10<<20 {
+		size *= 3 // Assume 66% compression rate for intial buffer sizing
+	}
+	if size > limit {
+		size = limit
+	}
+	defer close()
+
+	go func() {
+		_, err := rs.writerTo(w)
+		w.CloseWithError(err)
+	}()
+
+	body, err := readAll(wr, size, limit)
+	if err != nil {
+		return nil, err
+	}
+	return &resource{
+		contentType:     rs.contentType,
+		contentLength:   int64(len(body)),
+		contentEncoding: encoding.Identity,
+		writerTo:        writerTo(body),
+	}, nil
 }
 
 func readAll(r io.Reader, size, limit int64) ([]byte, error) {
@@ -389,6 +395,14 @@ func errError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	}
 	http.Error(w, http.StatusText(status), status)
+}
+
+func ensureHeaderValue(h http.Header, name, value string) {
+	if values, ok := h[name]; ok {
+		h[name] = ensureValue(values, value)
+		return
+	}
+	h[name] = []string{value}
 }
 
 // ensureValue ensures value will be present in returned slice of values.
